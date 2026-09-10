@@ -1,0 +1,38 @@
+# macOS
+.DS_Store
+
+# Xcode - Build generated
+build/
+DerivedData/
+
+# Xcode - User-specific settings
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.xcuserstate
+
+# Xcode - Other
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+*.hmap
+*.ipa
+
+# Swift Package Manager
+.build/
+.swiftpm/xcode/xcuserdata/
+# Note: DO NOT ignore Package.resolved so your dependency versions stay locked
+
+# CocoaPods (If you decide to use it later)
+# Pods/
+# Note: Whether to ignore the Pods folder is debated, but ignoring it keeps the repo small.
+# Do NOT ignore Podfile.lock.
+
+# Crashlytics / Firebase
+*.dSYM/
