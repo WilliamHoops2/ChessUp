@@ -6,13 +6,35 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		B78F076A3053084B00DDF21A /* ChessKitEngine in Frameworks */ = {isa = PBXBuildFile; productRef = B78F07693053084B00DDF21A /* ChessKitEngine */; };
+		B78F076D3053086A00DDF21A /* ChessKit in Frameworks */ = {isa = PBXBuildFile; productRef = B78F076C3053086A00DDF21A /* ChessKit */; };
+		B78F07713053C91400DDF21A /* nn-37f18f62d772.nnue in Resources */ = {isa = PBXBuildFile; fileRef = B78F076F3053C91400DDF21A /* nn-37f18f62d772.nnue */; };
+		B78F07723053C91400DDF21A /* nn-1111cefa1111.nnue in Resources */ = {isa = PBXBuildFile; fileRef = B78F07703053C91400DDF21A /* nn-1111cefa1111.nnue */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
+		B78F076F3053C91400DDF21A /* nn-37f18f62d772.nnue */ = {isa = PBXFileReference; lastKnownFileType = file; path = "nn-37f18f62d772.nnue"; sourceTree = "<group>"; };
+		B78F07703053C91400DDF21A /* nn-1111cefa1111.nnue */ = {isa = PBXFileReference; lastKnownFileType = file; path = "nn-1111cefa1111.nnue"; sourceTree = "<group>"; };
 		B7B76A6B305280C200F4B514 /* ChessUp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ChessUp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B78F07673052F5BD00DDF21A /* Exceptions for "ChessUp" folder in "ChessUp" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = B7B76A6A305280C200F4B514 /* ChessUp */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		B7B76A6D305280C200F4B514 /* ChessUp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B78F07673052F5BD00DDF21A /* Exceptions for "ChessUp" folder in "ChessUp" target */,
+			);
 			path = ChessUp;
 			sourceTree = "<group>";
 		};
@@ -23,15 +45,27 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B78F076D3053086A00DDF21A /* ChessKit in Frameworks */,
+				B78F076A3053084B00DDF21A /* ChessKitEngine in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		B78F076E3053C8E800DDF21A /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				B78F076F3053C91400DDF21A /* nn-37f18f62d772.nnue */,
+				B78F07703053C91400DDF21A /* nn-1111cefa1111.nnue */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		B7B76A62305280C200F4B514 = {
 			isa = PBXGroup;
 			children = (
+				B78F076E3053C8E800DDF21A /* Resources */,
 				B7B76A6D305280C200F4B514 /* ChessUp */,
 				B7B76A6C305280C200F4B514 /* Products */,
 			);
@@ -65,6 +99,8 @@
 			);
 			name = ChessUp;
 			packageProductDependencies = (
+				B78F07693053084B00DDF21A /* ChessKitEngine */,
+				B78F076C3053086A00DDF21A /* ChessKit */,
 			);
 			productName = ChessUp;
 			productReference = B7B76A6B305280C200F4B514 /* ChessUp.app */;
@@ -94,6 +130,10 @@
 			);
 			mainGroup = B7B76A62305280C200F4B514;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B78F07683053084B00DDF21A /* XCRemoteSwiftPackageReference "chesskit-engine" */,
+				B78F076B3053086A00DDF21A /* XCRemoteSwiftPackageReference "chesskit-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B7B76A6C305280C200F4B514 /* Products */;
 			projectDirPath = "";
@@ -109,6 +149,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B78F07713053C91400DDF21A /* nn-37f18f62d772.nnue in Resources */,
+				B78F07723053C91400DDF21A /* nn-1111cefa1111.nnue in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -256,6 +298,8 @@
 				DEVELOPMENT_TEAM = 3RUWTXHBX9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ChessUp/Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Camera Access is required to scan and analyze the chess board";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -288,6 +332,8 @@
 				DEVELOPMENT_TEAM = 3RUWTXHBX9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ChessUp/Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Camera Access is required to scan and analyze the chess board";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -332,6 +378,38 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B78F07683053084B00DDF21A /* XCRemoteSwiftPackageReference "chesskit-engine" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/chesskit-app/chesskit-engine";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.7.0;
+			};
+		};
+		B78F076B3053086A00DDF21A /* XCRemoteSwiftPackageReference "chesskit-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/chesskit-app/chesskit-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.17.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B78F07693053084B00DDF21A /* ChessKitEngine */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B78F07683053084B00DDF21A /* XCRemoteSwiftPackageReference "chesskit-engine" */;
+			productName = ChessKitEngine;
+		};
+		B78F076C3053086A00DDF21A /* ChessKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B78F076B3053086A00DDF21A /* XCRemoteSwiftPackageReference "chesskit-swift" */;
+			productName = ChessKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = B7B76A63305280C200F4B514 /* Project object */;
 }
