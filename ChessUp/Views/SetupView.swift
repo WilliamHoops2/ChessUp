@@ -15,6 +15,10 @@ struct SetupView: View {
     @State private var displayedSide: PlayerSide = .white
     @State private var iconScale: CGFloat = 1.0
     @State private var iconOpacity: Double = 1.0
+    
+    @State private var displayedDifficulty: BotDifficulty = .casual
+    @State private var difficultyImageScale: CGFloat = 1.0
+    @State private var difficultyImageOpacity: Double = 1.0
 
     var body: some View {
         ZStack {
@@ -59,12 +63,37 @@ struct SetupView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Bot difficulty")
                         .font(.headline)
-                    Picker("Difficulty", selection: $selectedDifficulty) {
-                        ForEach(BotDifficulty.allCases) { level in
-                            Text(level.displayName).tag(level)
+
+                    HStack {
+                        Image(displayedDifficulty.imageName)
+                            .resizable()
+                            .scaledToFit()
+                            .scaleEffect(difficultyImageScale)
+                            .opacity(difficultyImageOpacity)
+                            .onChange(of: selectedDifficulty) {
+                                withAnimation(.easeIn(duration: 0.15)) {
+                                    difficultyImageScale = 0.85
+                                    difficultyImageOpacity = 0
+                                }
+
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                    displayedDifficulty = selectedDifficulty
+
+                                    withAnimation(.easeOut(duration: 0.15)) {
+                                        difficultyImageScale = 1.0
+                                        difficultyImageOpacity = 1.0
+                                    }
+                                }
+                            }
+
+                        Picker("Difficulty", selection: $selectedDifficulty) {
+                            ForEach(BotDifficulty.allCases) { level in
+                                Text(level.displayName)
+                                    .tag(level)
+                            }
                         }
+                        .pickerStyle(.wheel)
                     }
-                    .pickerStyle(.wheel)
                 }
                 
                 Button {

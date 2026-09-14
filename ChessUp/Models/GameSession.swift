@@ -80,6 +80,21 @@ enum BotDifficulty: String, CaseIterable, Identifiable {
         case .maximum: return "Maximum"
         }
     }
+    
+    var imageName: String {
+        switch self {
+        case .beginner:
+            return "Easy"
+        case .casual:
+            return "Normal"
+        case .club:
+            return "Medium"
+        case .strong:
+            return "Hard"
+        case .maximum:
+            return "Extreme"
+        }
+    }
 }
 
 enum GamePhase {
