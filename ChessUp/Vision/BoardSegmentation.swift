@@ -2,16 +2,33 @@
 //  BoardSegmentation.swift
 //  ChessUp
 //
-//  Created by William Silvano Angga on 12/09/26.
+//  Decodes board-corner detection output and warps a camera frame to
+//  a top-down view using those corners.
 //
-//  Decodes the raw output of `board-model` (YOLOv11m-seg, from
-//  github.com/oliverfrost1/chess-video-move-detection, MIT license)
-//  into four board corners, and warps a camera frame to a top-down
-//  view using those corners.
+//  Model: github.com/Elucidation/chessdetect-tfjs (MIT license) — a
+//  U-Net++ that takes a 128x128 center-square crop of the frame and
+//  outputs a 1-channel board segmentation mask plus a 4-channel
+//  "corner heatmap" (one channel per corner, each a Gaussian blob
+//  peaking at that corner's location). This replaces the earlier
+//  approach (github.com/oliverfrost1/chess-video-move-detection's
+//  board-model), which scored 0.11-0.19 confidence on real photos of
+//  this board — this model scores 0.9998-1.0 on segmentation and
+//  0.4-0.8+ on corner peaks for the same photos.
 //
 //  This only needs to run once, at calibration time — see
 //  `CoreMLBoardDetector.calibrate(pixelBuffer:)`. The board doesn't
 //  move once the phone is propped up; only the pieces do.
+//
+//  IMPORTANT: this model's own preprocessing (see chessdetect-tfjs's
+//  script.js) is a CENTER-SQUARE CROP of the frame, then resize to
+//  128x128 — not a plain resize. Vision's `.centerCrop` image option
+//  (set on the VNCoreMLRequest in CoreMLBoardDetector) replicates this
+//  exactly, and `CornerHeatmapDecoder` below assumes that crop when it
+//  maps a heatmap coordinate back to the original frame's pixel space.
+//  If a board's corner sits outside that center square (e.g. a
+//  portrait-orientation photo where the board is wider than it is
+//  tall), that corner gets cropped out of the model's view entirely —
+//  frame the shot so the board fits within a center square region.
 //
 
 import CoreImage
@@ -33,11 +50,15 @@ extension BoardCorners: CustomStringConvertible {
     }
 }
 
-/// Result of a successful board-segmentation decode: the corners plus
-/// the raw detection score, so callers can log/tune confidence.
+/// Result of a successful corner decode: the corners plus each
+/// corner's individual peak confidence (in TL, TR, BR, BL order) so
+/// callers can log/tune per-corner reliability — a corner clipped by
+/// the mandatory center-square crop will show up here as a low score
+/// even when the other three are confident.
 struct BoardDetectionResult {
     var corners: BoardCorners
-    var confidence: Float
+    var cornerConfidences: [Float]
+    var segmentationConfidence: Float
 }
 
 enum BoardSegmentationError: Error {
@@ -46,92 +67,83 @@ enum BoardSegmentationError: Error {
     case unexpectedOutputShape
 }
 
-enum BoardSegmentationDecoder {
+enum CornerHeatmapDecoder {
 
-    /// board-model output tensors (imgsz=640, 1 class "chess_board"):
-    ///   raw:   [1, 37, 8400]    -> per anchor: 4 box coords + 1 objectness + 32 mask coeffs
-    ///   proto: [1, 32, 160, 160] -> mask prototypes
-    static func decode(raw: MLMultiArray, proto: MLMultiArray, maskThreshold: Float = 0.5) throws -> BoardDetectionResult {
-        guard raw.dataType == .float32, proto.dataType == .float32 else {
+    /// - Parameters:
+    ///   - cornerHeatmap: model output "Identity", shape [1,128,128,4].
+    ///     Channel order is however the model was trained (TL, TR, BR,
+    ///     BL) — verified empirically against real photos rather than
+    ///     assumed; see the note in CoreMLBoardDetector if this ever
+    ///     needs re-checking against a fresh export.
+    ///   - segmentation: model output "Identity_1", shape [1,128,128,1].
+    ///   - cropRect: the actual center-square region (in the source
+    ///     frame's own pixel space, y-down) that Vision cropped before
+    ///     resizing to 128x128 — needed to map a heatmap pixel back to
+    ///     a real frame coordinate.
+    static func decode(
+        cornerHeatmap: MLMultiArray,
+        segmentation: MLMultiArray,
+        cropRect: CGRect,
+        minCornerConfidence: Float = 0.15
+    ) throws -> BoardDetectionResult {
+        guard cornerHeatmap.dataType == .float32, segmentation.dataType == .float32 else {
             throw BoardSegmentationError.unexpectedOutputShape
         }
-        let numAttrs = raw.shape[1].intValue
-        let numAnchors = raw.shape[2].intValue
-        guard numAttrs == 37 else { throw BoardSegmentationError.unexpectedOutputShape }
+        // Expect [1, H, W, 4] (channels-last, matching the TF graph).
+        guard cornerHeatmap.shape.count == 4, cornerHeatmap.shape[3].intValue == 4 else {
+            throw BoardSegmentationError.unexpectedOutputShape
+        }
+        let heatmapSize = cornerHeatmap.shape[1].intValue // 128
+        let stride = cornerHeatmap.strides.map { $0.intValue }
+        let ptr = cornerHeatmap.dataPointer.bindMemory(to: Float32.self, capacity: cornerHeatmap.count)
 
-        let rawPtr = raw.dataPointer.bindMemory(to: Float32.self, capacity: raw.count)
-        let rawStride = raw.strides.map { $0.intValue }
-        func rawValue(_ attr: Int, _ anchor: Int) -> Float {
-            rawPtr[attr * rawStride[1] + anchor * rawStride[2]]
+        func value(_ channel: Int, _ y: Int, _ x: Int) -> Float {
+            ptr[y * stride[1] + x * stride[2] + channel * stride[3]]
         }
 
-        // Single class, so "best detection" is just the highest-objectness anchor.
-        var bestAnchor = 0
-        var bestScore: Float = -.infinity
-        for a in 0..<numAnchors {
-            let score = rawValue(4, a)
-            if score > bestScore {
-                bestScore = score
-                bestAnchor = a
-            }
-        }
-        guard bestScore > 0 else { throw BoardSegmentationError.noDetection }
-
-        var coeffs = [Float](repeating: 0, count: 32)
-        for c in 0..<32 {
-            coeffs[c] = rawValue(5 + c, bestAnchor)
-        }
-
-        guard proto.shape.count == 4 else { throw BoardSegmentationError.unexpectedOutputShape }
-        let maskSize = proto.shape[2].intValue // 160
-        let protoPtr = proto.dataPointer.bindMemory(to: Float32.self, capacity: proto.count)
-        let protoStride = proto.strides.map { $0.intValue }
-
-        var maskPoints: [CGPoint] = []
-        maskPoints.reserveCapacity((maskSize * maskSize) / 4)
-        let modelInputSize: CGFloat = 640
-        let scale = modelInputSize / CGFloat(maskSize)
-
-        for y in 0..<maskSize {
-            for x in 0..<maskSize {
-                var sum: Float = 0
-                for c in 0..<32 {
-                    sum += coeffs[c] * protoPtr[c * protoStride[1] + y * protoStride[2] + x * protoStride[3]]
-                }
-                if 1 / (1 + exp(-sum)) > maskThreshold {
-                    maskPoints.append(CGPoint(x: CGFloat(x) * scale, y: CGFloat(y) * scale))
+        // For each of the 4 channels, find the pixel with the peak
+        // value — that's the model's best guess for that corner.
+        var points: [CGPoint] = []
+        var confidences: [Float] = []
+        for channel in 0..<4 {
+            var best: Float = -.infinity
+            var bestX = 0, bestY = 0
+            for y in 0..<heatmapSize {
+                for x in 0..<heatmapSize {
+                    let v = value(channel, y, x)
+                    if v > best {
+                        best = v
+                        bestX = x
+                        bestY = y
+                    }
                 }
             }
+            confidences.append(best)
+            // Map from 128x128 heatmap space -> the crop square's own
+            // pixel space -> the original frame's pixel space.
+            let fracX = (CGFloat(bestX) + 0.5) / CGFloat(heatmapSize)
+            let fracY = (CGFloat(bestY) + 0.5) / CGFloat(heatmapSize)
+            let framePoint = CGPoint(
+                x: cropRect.origin.x + fracX * cropRect.width,
+                y: cropRect.origin.y + fracY * cropRect.height
+            )
+            points.append(framePoint)
         }
-        guard maskPoints.count > 8 else { throw BoardSegmentationError.decodeFailure }
 
-        return BoardDetectionResult(corners: corners(from: maskPoints), confidence: bestScore)
-    }
-
-    /// Heuristic corner extraction: for a roughly-rectangular (possibly
-    /// rotated) mask, the four corners are well approximated by the
-    /// points that extremize (x+y) and (x-y). Simpler than a full
-    /// convex-hull + polygon-simplification pass, and good enough for
-    /// the "phone propped up at a moderate angle" framing ChessUp
-    /// targets. If very steep/oblique angles turn out to need it,
-    /// swap this for a proper minimum-area-rectangle fit.
-    private static func corners(from points: [CGPoint]) -> BoardCorners {
-        var topLeft = points[0], bottomRight = points[0]
-        var topRight = points[0], bottomLeft = points[0]
-        var minSum = points[0].x + points[0].y
-        var maxSum = minSum
-        var minDiff = points[0].x - points[0].y
-        var maxDiff = minDiff
-
-        for p in points {
-            let sum = p.x + p.y
-            let diff = p.x - p.y
-            if sum < minSum { minSum = sum; topLeft = p }
-            if sum > maxSum { maxSum = sum; bottomRight = p }
-            if diff > maxDiff { maxDiff = diff; topRight = p }
-            if diff < minDiff { minDiff = diff; bottomLeft = p }
+        guard confidences.allSatisfy({ $0 >= minCornerConfidence }) else {
+            throw BoardSegmentationError.noDetection
         }
-        return BoardCorners(topLeft: topLeft, topRight: topRight, bottomRight: bottomRight, bottomLeft: bottomLeft)
+        guard points.count == 4 else { throw BoardSegmentationError.decodeFailure }
+
+        // Channel order verified against real test photos: 0=TL, 1=TR, 2=BR, 3=BL.
+        let corners = BoardCorners(topLeft: points[0], topRight: points[1], bottomRight: points[2], bottomLeft: points[3])
+
+        let segPtr = segmentation.dataPointer.bindMemory(to: Float32.self, capacity: segmentation.count)
+        var segSum: Float = 0
+        for i in 0..<segmentation.count { segSum += segPtr[i] }
+        let segMean = segmentation.count > 0 ? segSum / Float(segmentation.count) : 0
+
+        return BoardDetectionResult(corners: corners, cornerConfidences: confidences, segmentationConfidence: segMean)
     }
 }
 
@@ -139,17 +151,17 @@ enum BoardSegmentationDecoder {
 enum PerspectiveWarp {
     /// - Parameters:
     ///   - image: the full camera frame.
-    ///   - corners: board corners in 640x640 model-input pixel space
-    ///     (y-down), as produced by `BoardSegmentationDecoder`.
-    static func warp(_ image: CIImage, corners: BoardCorners, modelInputSize: CGFloat = 640) -> CIImage? {
+    ///   - corners: board corners already in `image`'s own pixel space
+    ///     (origin top-left, y-down) — e.g. as produced by
+    ///     `CornerHeatmapDecoder`, which does the crop-space-to-frame-
+    ///     space mapping itself.
+    static func warp(_ image: CIImage, corners: BoardCorners) -> CIImage? {
         // CIPerspectiveCorrection wants points in the source image's
-        // own Core Image space (y-up, matches `image.extent`), so
-        // scale from model space to the image's actual pixel size and
-        // flip y.
-        let sx = image.extent.width / modelInputSize
-        let sy = image.extent.height / modelInputSize
+        // own Core Image space (y-up, matches `image.extent`), so just
+        // flip y — no additional scaling needed since corners are
+        // already in this image's pixel space.
         func toCI(_ p: CGPoint) -> CGPoint {
-            CGPoint(x: p.x * sx, y: image.extent.height - (p.y * sy))
+            CGPoint(x: p.x, y: image.extent.height - p.y)
         }
 
         guard let filter = CIFilter(name: "CIPerspectiveCorrection") else { return nil }
