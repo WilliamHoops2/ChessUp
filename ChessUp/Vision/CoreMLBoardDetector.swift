@@ -2,32 +2,43 @@
 //  CoreMLBoardDetector.swift
 //  ChessUp
 //
-//  Created by William Silvano Angga on 12/09/26.
+//  Real vision pipeline. Board-corner detection uses a model converted
+//  from github.com/Elucidation/chessdetect-tfjs (MIT license) — a
+//  small (~300KB) U-Net++ that takes a 128x128 center-square crop and
+//  outputs a segmentation mask + 4-channel corner heatmap. Piece and
+//  hand detection still use the two YOLOv11 models converted from
+//  github.com/oliverfrost1/chess-video-move-detection (MIT license) —
+//  those were never the problem; only the old board-model (which
+//  scored 0.11-0.19 confidence on real photos of this board, versus
+//  this model's 0.9998-1.0 segmentation / 0.4-0.8+ corner confidence
+//  on the same photos) got replaced.
 //
-//  Real vision pipeline, built on three models converted from
-//  github.com/oliverfrost1/chess-video-move-detection (MIT license):
-//
-//    board-model  (YOLOv11m-seg) -> board polygon, used ONCE at
-//                                    calibration time to build a
-//                                    perspective warp (the board
-//                                    doesn't move mid-game, only the
-//                                    pieces do).
+//    chessboard-corners (U-Net++) -> board corners, used ONCE at
+//                                     calibration time to build a
+//                                     perspective warp (the board
+//                                     doesn't move mid-game, only the
+//                                     pieces do).
 //    pieces-model (YOLOv11l)     -> the 12 piece classes, run on every
 //                                    warped frame.
 //    hand-model   (YOLOv11l)     -> filters out frames where a hand is
 //                                    over the board mid-move.
 //
 //  Setup:
-//   1. Drag `board-model.mlpackage`, `pieces-model.mlpackage`, and
-//      `hand-model.mlpackage` into the Xcode project (Xcode compiles
-//      each to a `.mlmodelc` in the app bundle automatically).
+//   1. Drag `chessboard-corners.mlpackage`, `pieces-model.mlpackage`,
+//      and `hand-model.mlpackage` into the Xcode project (remove the
+//      old `board-model.mlpackage` if it's still there — it's no
+//      longer referenced by any code).
 //   2. Call `calibrate(pixelBuffer:)` once from a "line up the board"
-//      screen (matches the board-calibration overlay already planned
-//      in ARCHITECTURE.md) before using this as your `BoardDetector`.
-//      Calibration assumes the near edge of the frame (bottom, closest
-//      to the player holding the phone) is White's back rank — swap
-//      `rank` for `7 - rank` in `detectPieces` if you calibrate from
-//      Black's side instead.
+//      screen before using this as your `BoardDetector`. Calibration
+//      assumes the near edge of the frame (bottom, closest to the
+//      player holding the phone) is White's back rank — swap `rank`
+//      for `7 - rank` in `detectPieces` if you calibrate from Black's
+//      side instead.
+//   3. Frame the board so it fits within a CENTER SQUARE of the shot —
+//      this model's own preprocessing center-crops to a square before
+//      resizing, so a corner sitting outside that square (e.g. a very
+//      wide/tall aspect framing) never reaches the model at all. See
+//      BoardSegmentation.swift for details.
 //
 
 import CoreVideo
@@ -41,73 +52,82 @@ final class CoreMLBoardDetector: BoardDetector {
         case modelNotFound(String)
     }
 
-    private let boardModel: MLModel
+    private let cornersModel: VNCoreMLModel
     private let handModel: VNCoreMLModel
     private let piecesModel: VNCoreMLModel
     private let ciContext = CIContext()
 
-    /// Output feature names for `boardModel`, resolved once from its
-    /// spec rather than hardcoded — Core ML autogenerates names like
-    /// "var_1605" during conversion, and they can differ between
-    /// export runs.
-    private lazy var boardOutputNames: (raw: String, proto: String)? = {
-        var raw: String?
-        var proto: String?
-        for (name, desc) in boardModel.modelDescription.outputDescriptionsByName {
-            guard let shape = desc.multiArrayConstraint?.shape.map({ $0.intValue }) else { continue }
-            if shape.count == 3 { raw = name }      // [1, 37, 8400]
-            if shape.count == 4 { proto = name }    // [1, 32, 160, 160]
-        }
-        guard let raw, let proto else { return nil }
-        return (raw, proto)
-    }()
-
     /// Set once via `calibrate(pixelBuffer:)` or `setCalibratedCorners(_:)`.
-    /// `detectBoardState` returns nil (i.e. "not confident yet") until
-    /// this is set, same as it would for a bad frame.
     private var boardCorners: BoardCorners?
 
     private let pieceConfidenceThreshold: Float = 0.5
     private let handConfidenceThreshold: Float = 0.65
+    /// Each of the 4 corner-heatmap channels must clear this to accept
+    /// a calibration frame. Real corners scored 0.4-0.8+ in testing;
+    /// a corner clipped by the center-square crop (or just out of
+    /// frame) scored as low as 0.19-0.25 — this threshold is set low
+    /// enough to tolerate an imperfectly-centered shot while still
+    /// rejecting a corner that's genuinely not visible.
+    private let minCornerConfidence: Float = 0.15
 
     init() throws {
         let config = MLModelConfiguration()
         config.computeUnits = .all
 
-        func modelURL(_ name: String) throws -> URL {
+        func loadModel(_ name: String) throws -> VNCoreMLModel {
             guard let url = Bundle.main.url(forResource: name, withExtension: "mlmodelc") else {
                 throw SetupError.modelNotFound(name)
             }
-            return url
+            return try VNCoreMLModel(for: try MLModel(contentsOf: url, configuration: config))
         }
 
-        boardModel = try MLModel(contentsOf: try modelURL("board-model"), configuration: config)
-        handModel = try VNCoreMLModel(for: try MLModel(contentsOf: try modelURL("hand-model"), configuration: config))
-        piecesModel = try VNCoreMLModel(for: try MLModel(contentsOf: try modelURL("pieces-model"), configuration: config))
+        cornersModel = try loadModel("chessboard-corners")
+        handModel = try loadModel("hand-model")
+        piecesModel = try loadModel("pieces-model")
     }
 
     // MARK: - Calibration
 
     @discardableResult
     func calibrate(pixelBuffer: CVPixelBuffer) throws -> BoardCorners {
-        guard let (rawName, protoName) = boardOutputNames else {
-            log("⚠️ board-model outputs didn't match what we expected (need one 3-D and one 4-D output) — check the export")
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        // Matches Vision's own `.centerCrop` cropping exactly: crop the
+        // longer dimension symmetrically down to a centered square.
+        let side = CGFloat(min(width, height))
+        let cropRect = CGRect(
+            x: (CGFloat(width) - side) / 2,
+            y: (CGFloat(height) - side) / 2,
+            width: side,
+            height: side
+        )
+
+        let request = VNCoreMLRequest(model: cornersModel)
+        request.imageCropAndScaleOption = .centerCrop
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
+        try handler.perform([request])
+
+        guard let results = request.results as? [VNCoreMLFeatureValueObservation] else {
+            log("⚠️ chessboard-corners model returned an unexpected result type")
             throw BoardSegmentationError.unexpectedOutputShape
         }
-        let input = try MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(pixelBuffer: pixelBuffer)])
-        let output = try boardModel.prediction(from: input)
-
         guard
-            let raw = output.featureValue(for: rawName)?.multiArrayValue,
-            let proto = output.featureValue(for: protoName)?.multiArrayValue
+            let cornerHeatmap = results.first(where: { $0.featureName == "Identity" })?.featureValue.multiArrayValue,
+            let segmentation = results.first(where: { $0.featureName == "Identity_1" })?.featureValue.multiArrayValue
         else {
-            log("⚠️ board-model produced no usable output for this frame")
+            log("⚠️ chessboard-corners model produced no usable output for this frame")
             throw BoardSegmentationError.noDetection
         }
 
         do {
-            let result = try BoardSegmentationDecoder.decode(raw: raw, proto: proto)
-            log("✅ board calibrated — confidence \(String(format: "%.2f", result.confidence)), corners \(result.corners)")
+            let result = try CornerHeatmapDecoder.decode(
+                cornerHeatmap: cornerHeatmap,
+                segmentation: segmentation,
+                cropRect: cropRect,
+                minCornerConfidence: minCornerConfidence
+            )
+            let confStr = result.cornerConfidences.map { String(format: "%.2f", $0) }.joined(separator: ",")
+            log("✅ board calibrated — corner confidences [\(confStr)], segmentation \(String(format: "%.3f", result.segmentationConfidence)), corners \(result.corners)")
             boardCorners = result.corners
             return result.corners
         } catch {
