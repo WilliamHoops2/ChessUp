@@ -2,113 +2,56 @@
 //  SetupView.swift
 //  ChessUp
 //
-//  Created by William Silvano Angga on 12/09/26.
+//  Two-step setup flow: pick a side (ColorSelectionView), then pick
+//  bot difficulty (DifficultySelectionView), then start the game. This
+//  file just holds the shared selection state and steps between the
+//  two screens — see those files for the actual visual design.
 //
 
 import SwiftUI
 
 struct SetupView: View {
     @ObservedObject var session: GameSession
+
+    @State private var step: Step = .color
     @State private var selectedSide: PlayerSide = .white
-    @State private var selectedDifficulty: BotDifficulty = .casual
-    
-    @State private var displayedSide: PlayerSide = .white
-    @State private var iconScale: CGFloat = 1.0
-    @State private var iconOpacity: Double = 1.0
-    
-    @State private var displayedDifficulty: BotDifficulty = .casual
-    @State private var difficultyImageScale: CGFloat = 1.0
-    @State private var difficultyImageOpacity: Double = 1.0
+    @State private var selectedDifficulty: BotDifficulty = .medium
+
+    private enum Step {
+        case color
+        case difficulty
+    }
 
     var body: some View {
-        ZStack {
-            Color(.secondarySystemBackground)
-                .ignoresSafeArea()
-            
-            VStack(spacing: 32) {
-                Image(displayedSide == .white ? "ChessIconWht" : "ChessIconBlk")
-                    .resizable()
-                    .scaledToFit()
-                    .scaleEffect(iconScale)
-                    .opacity(iconOpacity)
-                    .onChange(of: selectedSide) {
-                        withAnimation(.easeIn(duration: 0.15)) {
-                            iconScale = 0.85
-                            iconOpacity = 0
-                        }
-
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                            displayedSide = selectedSide
-
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                iconScale = 1.0
-                                iconOpacity = 1.0
-                            }
-                        }
-                    }
-                
-                Text("ChessUp")
-                    .font(.largeTitle.bold())
-                
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Play as")
-                        .font(.headline)
-                    Picker("Side", selection: $selectedSide) {
-                        Text("White").tag(PlayerSide.white)
-                        Text("Black").tag(PlayerSide.black)
-                    }
-                    .pickerStyle(.segmented)
-                }
-                
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Bot difficulty")
-                        .font(.headline)
-
-                    HStack {
-                        Image(displayedDifficulty.imageName)
-                            .resizable()
-                            .scaledToFit()
-                            .scaleEffect(difficultyImageScale)
-                            .opacity(difficultyImageOpacity)
-                            .onChange(of: selectedDifficulty) {
-                                withAnimation(.easeIn(duration: 0.15)) {
-                                    difficultyImageScale = 0.85
-                                    difficultyImageOpacity = 0
-                                }
-
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                    displayedDifficulty = selectedDifficulty
-
-                                    withAnimation(.easeOut(duration: 0.15)) {
-                                        difficultyImageScale = 1.0
-                                        difficultyImageOpacity = 1.0
-                                    }
-                                }
-                            }
-
-                        Picker("Difficulty", selection: $selectedDifficulty) {
-                            ForEach(BotDifficulty.allCases) { level in
-                                Text(level.displayName)
-                                    .tag(level)
-                            }
-                        }
-                        .pickerStyle(.wheel)
+        Group {
+            switch step {
+            case .color:
+                ColorSelectionView(selectedSide: $selectedSide) {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        step = .difficulty
                     }
                 }
-                
-                Button {
-                    session.startGame(humanSide: selectedSide, difficulty: selectedDifficulty)
-                } label: {
-                    Text("Set Up Board")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.accentColor)
-                        .foregroundStyle(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
+                .transition(.asymmetric(
+                    insertion: .move(edge: .leading),
+                    removal: .move(edge: .leading)
+                ))
+            case .difficulty:
+                DifficultySelectionView(
+                    selectedDifficulty: $selectedDifficulty,
+                    onBack: {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            step = .color
+                        }
+                    },
+                    onContinue: {
+                        session.startGame(humanSide: selectedSide, difficulty: selectedDifficulty)
+                    }
+                )
+                .transition(.asymmetric(
+                    insertion: .move(edge: .trailing),
+                    removal: .move(edge: .trailing)
+                ))
             }
-            .padding(24)
         }
     }
 }

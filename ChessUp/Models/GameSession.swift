@@ -36,63 +36,58 @@ enum PlayerSide: String {
 }
 
 enum BotDifficulty: String, CaseIterable, Identifiable {
-    case beginner       // ELO ~800  - Stockfish Skill Level ~0-2, shallow depth
-    case casual         // ELO ~1200 - Skill Level ~6-8
-    case club           // ELO ~1600 - Skill Level ~12-14
-    case strong         // ELO ~2000 - Skill Level ~18
-    case maximum        // Full strength, no skill-level limiting
+    case easy    // ELO ~800  - Stockfish Skill Level ~2, shallow depth
+    case medium  // ELO ~1400 - Skill Level ~10
+    case hard    // ELO ~2000+ - Skill Level ~18
 
     var id: String { rawValue }
 
     /// Stockfish's "Skill Level" UCI option ranges 0-20. This is the
     /// simplest, most reliable way to weaken the engine (as opposed to
     /// limiting depth/time alone, which can still play very sharp
-    /// individual moves). Confirm the exact UCI option name/enum case
-    /// against ChessKitEngine's current API before wiring this up —
-    /// it may expose this as `.setoption(id: "Skill Level", value:)`
-    /// or a typed convenience method.
+    /// individual moves).
     var stockfishSkillLevel: Int {
         switch self {
-        case .beginner: return 1
-        case .casual: return 7
-        case .club: return 13
-        case .strong: return 18
-        case .maximum: return 20
+        case .easy: return 2
+        case .medium: return 10
+        case .hard: return 18
         }
     }
 
     var searchDepth: Int {
         switch self {
-        case .beginner: return 4
-        case .casual: return 8
-        case .club: return 12
-        case .strong: return 16
-        case .maximum: return 20
+        case .easy: return 4
+        case .medium: return 10
+        case .hard: return 16
         }
     }
 
     var displayName: String {
         switch self {
-        case .beginner: return "Beginner"
-        case .casual: return "Casual"
-        case .club: return "Club Player"
-        case .strong: return "Strong"
-        case .maximum: return "Maximum"
+        case .easy: return "Easy"
+        case .medium: return "Medium"
+        case .hard: return "Hard"
         }
     }
-    
-    var imageName: String {
+
+    /// Unicode chess glyph representing this difficulty on the setup
+    /// screen — pawn = easy, knight = medium, queen = hard, per the
+    /// design brief. Reads intuitively even to someone who doesn't
+    /// know chess piece values: a bigger/fancier-looking piece just
+    /// feels harder.
+    var glyph: String {
         switch self {
-        case .beginner:
-            return "Easy"
-        case .casual:
-            return "Normal"
-        case .club:
-            return "Medium"
-        case .strong:
-            return "Hard"
-        case .maximum:
-            return "Extreme"
+        case .easy: return "♟"
+        case .medium: return "♞"
+        case .hard: return "♛"
+        }
+    }
+
+    var tagline: String {
+        switch self {
+        case .easy: return "New to chess? Start here."
+        case .medium: return "Know the basics? Step it up."
+        case .hard: return "Ready for a real challenge?"
         }
     }
 }
@@ -120,7 +115,7 @@ enum GamePhase {
 final class GameSession: ObservableObject {
     @Published var phase: GamePhase = .setup
     @Published var humanSide: PlayerSide = .white
-    @Published var difficulty: BotDifficulty = .casual
+    @Published var difficulty: BotDifficulty = .medium
     @Published var lastAnnouncedMove: String?
     @Published var moveHistory: [String] = []   // SAN strings, for an on-screen log
 
