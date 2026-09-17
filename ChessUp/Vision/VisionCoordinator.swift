@@ -44,11 +44,62 @@ final class VisionCoordinator: ObservableObject {
     /// person holding the phone can see they've got the board framed.
     var cameraManager: CameraManager { camera }
 
+    // MARK: - Debug overlay state
+    // Surfaced for DebugOverlayView (see GameView) so the corners the
+    // model is finding, and the same status messages that print to
+    // the Xcode console, are visible on-screen too — useful when
+    // testing untethered. None of this affects detection itself.
+
+    /// The model's most recent corner guess, whether or not it was
+    /// confident enough to accept as a real calibration. Nil until the
+    /// first calibration attempt (or always nil for MockBoardDetector,
+    /// which never calibrates against real corners).
+    @Published private(set) var debugCorners: BoardCorners?
+    @Published private(set) var debugCornerConfidences: [Float]?
+    /// Pixel dimensions of the raw camera frame the corners above were
+    /// found in — needed to map those frame-space points onto the
+    /// preview view's own size/aspect-fill.
+    @Published private(set) var debugImageSize: CGSize = .zero
+    /// Mirrors CoreMLBoardDetector's console log, most recent line last.
+    @Published private(set) var debugMessage: String = ""
+    /// The warped top-down crop pieces-model actually analyzed, plus
+    /// what it found there — nil/empty until the board is calibrated
+    /// and at least one frame has reached piece detection.
+    @Published private(set) var debugWarpedImage: CGImage?
+    @Published private(set) var debugPieces: [PieceDetectionDebug] = []
+    @Published private(set) var debugBoardGrid: BoardGrid = .uniform
+
+    /// True once the board's corners are locked in — i.e. once it's
+    /// meaningful to show a "board found, set up your pieces and tap
+    /// Confirm" prompt. Deliberately separate from GameSession's own
+    /// phase transition: corners lock in based purely on the board's
+    /// physical edges being visible, whether or not pieces are on it
+    /// yet, so this can go true well before the game is actually ready
+    /// to start tracking moves.
+    @Published private(set) var isReadyToConfirmSetup = false
+
     init(session: GameSession, detector: BoardDetector) {
         self.session = session
         self.detector = detector
         self.isUsingMockDetector = detector is MockBoardDetector
         camera.delegate = self
+
+        if let coreMLDetector = detector as? CoreMLBoardDetector {
+            coreMLDetector.onCalibrationAttempt = { [weak self] corners, confidences in
+                self?.debugCorners = corners
+                self?.debugCornerConfidences = confidences
+            }
+            coreMLDetector.onDebugMessage = { [weak self] message in
+                self?.debugMessage = message
+            }
+            coreMLDetector.onFrameAnalysis = { [weak self] image, pieces in
+                self?.debugWarpedImage = image
+                self?.debugPieces = pieces
+            }
+            coreMLDetector.onGridRefined = { [weak self] grid in
+                self?.debugBoardGrid = grid
+            }
+        }
 
         if isUsingMockDetector {
             // Nothing to calibrate against — unblock GameSession's
@@ -87,6 +138,14 @@ final class VisionCoordinator: ObservableObject {
         camera.stop()
     }
 
+    /// Call when the user taps a "my board is set up" confirm button.
+    /// No-op for MockBoardDetector (nothing to confirm there — the mock
+    /// path unblocks GameSession immediately in init, since it has no
+    /// real board to wait on in the first place).
+    func confirmBoardSetup() {
+        (detector as? CoreMLBoardDetector)?.confirmPiecesReady()
+    }
+
     /// Debug-only: simulate a human physically moving a piece, without
     /// a camera. `from`/`to` are algebraic squares, e.g. "e2", "e4".
     /// Feeds MoveDetector enough identical "stable" frames to satisfy
@@ -112,7 +171,7 @@ final class VisionCoordinator: ObservableObject {
     /// works, since ingest() is idempotent once already stable.
     private func feedMockSnapshotUntilResolved(_ mock: MockBoardDetector) {
         for _ in 0..<5 {
-            if let lanMove = moveDetector.ingest(mock.currentSnapshot) {
+            if let lanMove = moveDetector.ingest(mock.currentSnapshot, oracle: session) {
                 session.humanMoveDetected(lanMove: lanMove)
                 return
             }
@@ -151,29 +210,46 @@ extension VisionCoordinator: CameraManagerDelegate {
     nonisolated func cameraManager(_ manager: CameraManager, didCapture pixelBuffer: CVPixelBuffer) {
         nonisolated(unsafe) let buffer = pixelBuffer
         Task { @MainActor in
-            // One-time calibration: run board-model until it finds the
-            // board, then lock in the corners for every future frame
-            // (see CoreMLBoardDetector.calibrate). A future
-            // BoardCalibrationView can call `setCalibratedCorners`
-            // directly instead, once the drag-to-adjust overlay exists
-            // (see the TODO in GameView) — this auto-calibration is a
-            // reasonable default in the meantime.
+            debugImageSize = CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
+
             if let coreMLDetector = detector as? CoreMLBoardDetector, !coreMLDetector.isCalibrated {
-                do {
-                    try coreMLDetector.calibrate(pixelBuffer: buffer)
-                    session.boardCalibrated()
-                } catch {
-                    // CoreMLBoardDetector already logs the specific
-                    // reason (see its `log(...)` calls) — expected to
-                    // fail repeatedly while lining up the board, so no
-                    // need to double-log here.
+                // Only runs until locked in (see CoreMLBoardDetector's
+                // multi-frame consensus process) — with the phone on a
+                // tripod, the board's position is fixed once set up, so
+                // there's nothing to gain from continuing to run corner
+                // detection after that, and real cost (a wasted model
+                // inference every single frame for the rest of the
+                // session) to not stopping.
+                // `calibrate` is `@discardableResult`, but that
+                // attribute doesn't propagate through `try?` — `try?`
+                // wraps the return value in a *new* Optional, and using
+                // that standalone still triggers "result of 'try?' is
+                // unused". Explicitly discarding makes the intent
+                // clear: errors and the returned corners are both
+                // handled via the onCalibrationAttempt/onDebugMessage
+                // callbacks above, not the return value here.
+                _ = try? coreMLDetector.calibrate(pixelBuffer: buffer)
+                if coreMLDetector.isCalibrated {
+                    // Corners locked — NOT the same as the game being
+                    // ready to start (see isReadyToConfirmSetup's doc
+                    // comment). This just unlocks the "tap Confirm once
+                    // your pieces are set up" prompt; GameSession's
+                    // phase advances separately, below, only once
+                    // occupancy calibration has actually finished.
+                    isReadyToConfirmSetup = true
                 }
-                return
             }
 
             guard let observed = detector.detectBoardState(in: buffer) else { return }
-            if let lanMove = moveDetector.ingest(observed) {
-                print("[ChessUp Vision] \u{1F3AF} move detected: \(lanMove)")
+
+            if let coreMLDetector = detector as? CoreMLBoardDetector, coreMLDetector.isFullyCalibrated {
+                session.boardCalibrated() // no-ops after the first call
+            }
+
+            if let lanMove = moveDetector.ingest(observed, oracle: session) {
+                let message = "\u{1F3AF} move detected: \(lanMove)"
+                print("[ChessUp Vision] \(message)")
+                debugMessage = message
                 session.humanMoveDetected(lanMove: lanMove)
             }
         }

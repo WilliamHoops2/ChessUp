@@ -2,6 +2,8 @@
 //  BoardSegmentation.swift
 //  ChessUp
 //
+//  Created by William Silvano Angga on 15/09/26.
+//
 //  Decodes board-corner detection output and warps a camera frame to
 //  a top-down view using those corners.
 //
@@ -80,11 +82,18 @@ enum CornerHeatmapDecoder {
     ///     frame's own pixel space, y-down) that Vision cropped before
     ///     resizing to 128x128 — needed to map a heatmap pixel back to
     ///     a real frame coordinate.
+    ///
+    /// Always returns its best guess, even a low-confidence one — it
+    /// does NOT reject low-confidence corners itself (that's
+    /// `CoreMLBoardDetector.calibrate`'s call, since it also needs to
+    /// decide whether to accept calibration). Returning the attempt
+    /// either way lets a debug overlay show what the model is seeing
+    /// even before/without a successful calibration. Only throws for
+    /// genuine structural problems (wrong dtype/shape).
     static func decode(
         cornerHeatmap: MLMultiArray,
         segmentation: MLMultiArray,
-        cropRect: CGRect,
-        minCornerConfidence: Float = 0.15
+        cropRect: CGRect
     ) throws -> BoardDetectionResult {
         guard cornerHeatmap.dataType == .float32, segmentation.dataType == .float32 else {
             throw BoardSegmentationError.unexpectedOutputShape
@@ -130,9 +139,6 @@ enum CornerHeatmapDecoder {
             points.append(framePoint)
         }
 
-        guard confidences.allSatisfy({ $0 >= minCornerConfidence }) else {
-            throw BoardSegmentationError.noDetection
-        }
         guard points.count == 4 else { throw BoardSegmentationError.decodeFailure }
 
         // Channel order verified against real test photos: 0=TL, 1=TR, 2=BR, 3=BL.

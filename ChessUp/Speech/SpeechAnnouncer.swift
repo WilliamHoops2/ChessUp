@@ -14,6 +14,24 @@ import AVFoundation
 final class SpeechAnnouncer: NSObject {
     private let synthesizer = AVSpeechSynthesizer()
 
+    override init() {
+        super.init()
+        // Without this, AVSpeechSynthesizer's audio respects the
+        // hardware mute switch by default (the system treats it like
+        // ambient/incidental sound), so announcements can silently not
+        // play at all depending on the switch position — easy to miss
+        // while testing if the phone happens to be unmuted. `.playback`
+        // is the category for audio that's the deliberate point of the
+        // app (this app's entire premise is—don't look at the phone,
+        // listen to it), so it should always play.
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .voicePrompt, options: [.duckOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("[ChessUp Speech] ⚠️ failed to configure audio session: \(error) — announcements may not play if the phone is muted")
+        }
+    }
+
     /// Takes a plain SAN string (e.g. "Nf3", "exd5", "O-O") rather than
     /// an EngineMove — speech doesn't need to know anything about the
     /// engine, just the move that was actually applied to the board.

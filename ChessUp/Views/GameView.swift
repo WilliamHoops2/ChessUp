@@ -45,58 +45,113 @@ struct GameView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            // Live camera feed for whoever's holding the phone to line
-            // up the board — purely visual, has no effect on detection
-            // (VisionCoordinator reads frames independently). Falls back
-            // to plain black when running against MockBoardDetector,
-            // since CameraManager's session was never started in that
-            // case (see VisionCoordinator.start()) and there'd be
-            // nothing to preview. A BoardCalibrationView overlay during
-            // `.calibratingBoard` (drag the 4 corners to align them) is
-            // still a good future addition — CoreMLBoardDetector
-            // auto-calibrates from the first frame it finds the board
-            // in, so this works without the overlay too.
-            if vision.isUsingMockDetector {
-                Color.black.ignoresSafeArea()
-            } else {
-                CameraPreviewView(cameraManager: vision.cameraManager)
+        GeometryReader { outerGeo in
+            // Captured HERE, one level above anything that calls
+            // `.ignoresSafeArea()` — once a view opts a region out of
+            // the safe area, a GeometryReader *inside* that region
+            // reports that edge's `safeAreaInsets` as ~0 (the view has
+            // told SwiftUI it doesn't need insetting there anymore).
+            // DebugOverlayView used to compute its own top padding from
+            // its own internal GeometryReader, which sat inside a view
+            // GameView had already called `.ignoresSafeArea()` on — so
+            // that padding was only ever the literal `+ 12`, nowhere
+            // near enough to clear the Dynamic Island. Reading the real
+            // insets up here, before any ignoresSafeArea boundary, and
+            // passing them down explicitly fixes that at the source.
+            let safeTop = outerGeo.safeAreaInsets.top
+            let safeBottom = outerGeo.safeAreaInsets.bottom
+
+            ZStack(alignment: .bottom) {
+                // Live camera feed for whoever's holding the phone to line
+                // up the board — purely visual, has no effect on detection
+                // (VisionCoordinator reads frames independently). Falls back
+                // to plain black when running against MockBoardDetector,
+                // since CameraManager's session was never started in that
+                // case (see VisionCoordinator.start()) and there'd be
+                // nothing to preview. A BoardCalibrationView overlay during
+                // `.calibratingBoard` (drag the 4 corners to align them) is
+                // still a good future addition — CoreMLBoardDetector
+                // auto-calibrates from the first frame it finds the board
+                // in, so this works without the overlay too.
+                if vision.isUsingMockDetector {
+                    Color.black.ignoresSafeArea()
+                } else {
+                    CameraPreviewView(cameraManager: vision.cameraManager)
+                        .ignoresSafeArea()
+                    DebugOverlayView(
+                        corners: vision.debugCorners,
+                        cornerConfidences: vision.debugCornerConfidences,
+                        imageSize: vision.debugImageSize,
+                        statusMessage: vision.debugMessage,
+                        isCalibrated: !session.phase.isCalibratingBoard,
+                        warpedImage: vision.debugWarpedImage,
+                        detectedPieces: vision.debugPieces,
+                        boardGrid: vision.debugBoardGrid,
+                        safeAreaTop: safeTop,
+                        safeAreaBottom: safeBottom
+                    )
                     .ignoresSafeArea()
-            }
-
-            VStack(spacing: 16) {
-                statusBanner
-
-                if let last = session.lastAnnouncedMove {
-                    Text(last)
-                        .font(.title2.bold())
-                        .foregroundStyle(.white)
                 }
 
-                ScrollView(.horizontal) {
-                    HStack {
-                        ForEach(Array(session.moveHistory.enumerated()), id: \.offset) { _, move in
-                            Text(move)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(.white.opacity(0.15))
-                                .foregroundStyle(.white)
-                                .clipShape(Capsule())
+                VStack(spacing: 16) {
+                    statusBanner
+
+                    if let last = session.lastAnnouncedMove {
+                        Text(last)
+                            .font(.title2.bold())
+                            .foregroundStyle(.white)
+                    }
+
+                    ScrollView(.horizontal) {
+                        HStack {
+                            ForEach(Array(session.moveHistory.enumerated()), id: \.offset) { _, move in
+                                Text(move)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(.white.opacity(0.15))
+                                    .foregroundStyle(.white)
+                                    .clipShape(Capsule())
+                            }
                         }
                     }
-                }
 
-                #if DEBUG
-                if vision.isUsingMockDetector {
-                    debugMoveSimulator
+                    #if DEBUG
+                    if vision.isUsingMockDetector {
+                        debugMoveSimulator
+                    }
+                    #endif
+
+                    if session.phase.isCalibratingBoard && vision.isReadyToConfirmSetup {
+                        confirmSetupButton
+                    }
                 }
-                #endif
+                .padding()
+                .background(.black.opacity(0.5))
             }
-            .padding()
-            .background(.black.opacity(0.5))
+            .overlay(alignment: .topLeading) { backButton }
         }
         .onAppear { vision.start() }
         .onDisappear { vision.stop() }
+    }
+
+    /// Abandons the current game and returns to SetupView. Lives in
+    /// the outer ZStack (which does NOT ignore the safe area, unlike
+    /// the camera/debug-overlay layers), so a plain padding is enough
+    /// to clear the Dynamic Island/notch — no safe-area math needed
+    /// here the way DebugOverlayView needs it.
+    private var backButton: some View {
+        Button {
+            session.returnToSetup()
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(10)
+                .background(.black.opacity(0.5))
+                .clipShape(Circle())
+        }
+        .padding(.leading, 16)
+        .padding(.top, 8)
     }
 
     #if DEBUG
@@ -131,13 +186,38 @@ struct GameView: View {
     }
     #endif
 
+    /// Shown once the board's corners are locked in (see
+    /// VisionCoordinator.isReadyToConfirmSetup) but before GameSession
+    /// has actually advanced out of `.calibratingBoard` — i.e. exactly
+    /// the window where the player should be physically arranging all
+    /// 32 pieces into the standard starting position. Tapping this is
+    /// what tells the occupancy classifier "the board is ready, go
+    /// ahead and sample it now" rather than that being inferred
+    /// automatically the moment corners happen to lock, which could
+    /// fire before the pieces were actually all in place.
+    private var confirmSetupButton: some View {
+        Button {
+            vision.confirmBoardSetup()
+        } label: {
+            Text("Board is set up — Confirm")
+                .font(.subheadline.bold())
+                .foregroundStyle(.black)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(.white)
+                .clipShape(Capsule())
+        }
+    }
+
     private var statusBanner: some View {
         Group {
             switch session.phase {
             case .setup:
                 Text("Setting up…")
             case .calibratingBoard:
-                Text("Point the camera at the board")
+                Text(vision.isReadyToConfirmSetup
+                    ? "Board found — set up your pieces, then tap Confirm"
+                    : "Point the camera at the board")
             case .waitingForHumanMove:
                 Text("Your move — make it on the board")
             case .engineThinking:
