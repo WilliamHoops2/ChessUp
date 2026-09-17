@@ -2,12 +2,8 @@
 //  SetupView.swift
 //  ChessUp
 //
-//  Two-step setup flow: pick a side (ColorSelectionView), then pick
-//  bot difficulty (DifficultySelectionView), then start the game. This
-//  file just holds the shared selection state and steps between the
-//  two screens — see those files for the actual visual design.
+//  Created by William Silvano Angga on 17/09/26.
 //
-
 import SwiftUI
 
 struct SetupView: View {

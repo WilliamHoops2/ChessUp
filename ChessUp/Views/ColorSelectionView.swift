@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ColorSelectionView: View {
     @Binding var selectedSide: PlayerSide
+    @State private var isPulsing = false
     let onBack: () -> Void
     let onContinue: () -> Void
 
@@ -47,6 +48,14 @@ struct ColorSelectionView: View {
                 continueBar
             }
         }
+        .onAppear {
+            withAnimation(
+                .easeInOut(duration: 0.65)
+                    .repeatForever(autoreverses: true)
+            ) {
+                isPulsing = true
+            }
+        }
     }
     
     private var backButton: some View {
@@ -79,25 +88,70 @@ struct ColorSelectionView: View {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                 selectedSide = side
             }
+
+            if selectedSide == side {
+                isPulsing = false
+
+                DispatchQueue.main.async {
+                    withAnimation(
+                        .easeInOut(duration: 0.65)
+                            .repeatForever(autoreverses: true)
+                    ) {
+                        isPulsing = true
+                    }
+                }
+            }
         } label: {
             VStack(spacing: 14) {
                 Text(isWhiteCard ? "♙" : "♟")
                     .font(.system(size: 60))
-                    .foregroundStyle(isWhiteCard ? .black : .white)
+                    .foregroundStyle(
+                        isWhiteCard ? .black : .white
+                    )
 
                 Text(side == .white ? "WHITE" : "BLACK")
-                    .font(.system(size: 14, weight: .bold, design: .default).width(.condensed))
+                    .font(
+                        .system(
+                            size: 14,
+                            weight: .bold,
+                            design: .default
+                        )
+                        .width(.condensed)
+                    )
                     .tracking(2)
-                    .foregroundStyle(isWhiteCard ? .black : .white)
+                    .foregroundStyle(
+                        isWhiteCard ? .black : .white
+                    )
             }
             .frame(maxWidth: .infinity)
             .frame(height: 168)
-            .background(isWhiteCard ? Color.white : Color(white: 0.14))
+            .background(
+                isWhiteCard
+                    ? Color.white
+                    : Color(white: 0.14)
+            )
             .overlay(
                 Rectangle()
-                    .strokeBorder(Color.white, lineWidth: isSelected ? 3 : 0)
+                    .strokeBorder(
+                        isWhiteCard
+                            ? Color.black
+                            : Color.white,
+                        lineWidth: isSelected ? 3 : 0
+                    )
             )
-            .scaleEffect(isSelected ? 1.02 : 1.0)
+            .shadow(
+                color: isSelected
+                    ? (isWhiteCard ? Color.black : Color.white)
+                        .opacity(isPulsing ? 0.30 : 0.15)
+                    : Color.clear,
+                radius: isPulsing ? 14 : 6
+            )
+            .scaleEffect(
+                isSelected
+                    ? (isPulsing ? 1.07 : 1.02)
+                    : 1.0
+            )
+            .opacity(isSelected ? 1.0 : 0.45)
         }
         .buttonStyle(.plain)
     }
