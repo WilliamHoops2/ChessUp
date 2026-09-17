@@ -2,44 +2,51 @@
 //  BoardState.swift
 //  ChessUp
 //
-//  Created by William Silvano Angga on 12/09/26.
+//  Created by William Silvano Angga on 15/09/26.
 //
 //  Represents what the camera/vision pipeline currently sees on the
-//  physical board: which piece (if any) occupies each of the 64 squares.
-//  This is deliberately decoupled from ChessKit's `Position` type —
-//  vision output is "noisy" (a snapshot of reality), whereas a chess
-//  `Position` is "authoritative" (a validated legal game state). We
-//  diff BoardState snapshots to infer a move, then hand that move to
-//  ChessKit to validate and apply.
+//  physical board: which color (if any) occupies each of the 64
+//  squares. Deliberately does NOT track piece kind (pawn vs knight vs
+//  queen etc) — only occupancy + color, a 3-class-per-square problem
+//  rather than a 12-class one.
+//
+//  This is the core simplification: since a real chess game always
+//  starts from the same known position, GameSession/ChessKit's Board
+//  is the sole source of truth for WHICH piece is on a square — it
+//  derives that from the starting position plus every legal move
+//  played since. The vision layer's only job is noticing when a
+//  square's occupant changed; MoveDetector cross-references those
+//  changes against ChessKit's legal-move generator (via
+//  MoveLegalityOracle) to figure out which move actually happened.
+//
+//  Deliberately decoupled from ChessKit's `Position` type for the same
+//  reason as before — vision output is "noisy" (a snapshot of
+//  reality), whereas a chess `Position` is "authoritative" (a
+//  validated legal game state) — but reuses ChessKit's `Piece.Color`
+//  directly rather than a separate app-defined color enum, since
+//  that's the one piece of piece-identity vision genuinely does need
+//  to track, and it's the same concept either way.
 //
 
 import Foundation
+import ChessKit
 
-enum PieceColor: String, Codable {
-    case white
-    case black
-}
-
-enum PieceKind: String, Codable, CaseIterable {
-    case pawn, knight, bishop, rook, queen, king
-}
-
-struct DetectedPiece: Codable, Equatable {
-    let color: PieceColor
-    let kind: PieceKind
+enum Occupant: Equatable, Hashable {
+    case empty
+    case piece(Piece.Color)
 }
 
 /// A single snapshot of the 64 squares, indexed a1...h8.
 /// File 0 = a, File 7 = h. Rank 0 = rank 1, Rank 7 = rank 8.
 struct BoardState: Equatable {
-    /// squares[file][rank] — nil means empty square
-    var squares: [[DetectedPiece?]]
+    /// squares[file][rank]
+    var squares: [[Occupant]]
 
     init() {
-        squares = Array(repeating: Array(repeating: nil, count: 8), count: 8)
+        squares = Array(repeating: Array(repeating: .empty, count: 8), count: 8)
     }
 
-    subscript(file: Int, rank: Int) -> DetectedPiece? {
+    subscript(file: Int, rank: Int) -> Occupant {
         get { squares[file][rank] }
         set { squares[file][rank] = newValue }
     }
@@ -51,15 +58,17 @@ struct BoardState: Equatable {
     }
 
     /// The standard starting position, useful for calibration and testing
-    /// the pipeline without a camera.
+    /// the pipeline without a camera. Only colors are recorded — file 0
+    /// (the back rank rook/knight/bishop/queen/king row) is
+    /// indistinguishable from any other occupied square vision-wise,
+    /// which is exactly the point.
     static var startingPosition: BoardState {
         var state = BoardState()
-        let backRank: [PieceKind] = [.rook, .knight, .bishop, .queen, .king, .bishop, .knight, .rook]
         for file in 0..<8 {
-            state[file, 0] = DetectedPiece(color: .white, kind: backRank[file])
-            state[file, 1] = DetectedPiece(color: .white, kind: .pawn)
-            state[file, 6] = DetectedPiece(color: .black, kind: .pawn)
-            state[file, 7] = DetectedPiece(color: .black, kind: backRank[file])
+            state[file, 0] = .piece(.white)
+            state[file, 1] = .piece(.white)
+            state[file, 6] = .piece(.black)
+            state[file, 7] = .piece(.black)
         }
         return state
     }

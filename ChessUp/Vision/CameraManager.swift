@@ -74,7 +74,7 @@ final class CameraManager: NSObject {
         session.sessionPreset = .high
 
         guard
-            let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+            let device = Self.pickCaptureDevice(),
             let input = try? AVCaptureDeviceInput(device: device),
             session.canAddInput(input)
         else {
@@ -92,10 +92,62 @@ final class CameraManager: NSObject {
         }
         session.addOutput(output)
 
+        // CRITICAL: without this, the CVPixelBuffers handed to the
+        // delegate stay in the camera sensor's native orientation
+        // (landscape, e.g. 1920x1080) regardless of how the phone is
+        // actually held — AVCaptureVideoPreviewLayer rotates its OWN
+        // rendering for display independently, so the preview looks
+        // correctly upright even while the buffers going to Vision/
+        // CoreML are still sideways. That mismatch is what was causing
+        // the corner model's output points, the perspective warp, and
+        // the debug overlay to all disagree about coordinate space.
+        // Rotating here means every downstream consumer — corner
+        // detection, the warp, the debug overlay's imageSize — works
+        // in the same portrait pixel space the user actually sees.
+        // This assumes the phone is held in portrait for the
+        // overhead-board shot described in the app spec; if you ever
+        // support landscape mounting too, this angle needs to track
+        // the device/interface orientation instead of being hardcoded.
+        //
+        // Only the iOS 17+ `videoRotationAngle` API is used here (no
+        // `videoOrientation` fallback) — the project has no deployment
+        // target override, so it inherits Xcode 26.6's modern default,
+        // well above 17. `videoOrientation`/`isVideoOrientationSupported`
+        // are deprecated as of iOS 17, and referencing them at all
+        // triggers a deprecation warning regardless of which branch of
+        // an `#available` check they're in — `#available` only guards
+        // whether an API is *callable*, not whether the compiler warns
+        // about it being deprecated. If you ever do lower the
+        // deployment target below 17, this silently no-ops there
+        // instead of rotating, which is worth knowing rather than
+        // reaching for the deprecated fallback again.
+        if #available(iOS 17.0, *),
+           let connection = output.connection(with: .video),
+           connection.isVideoRotationAngleSupported(90) {
+            connection.videoRotationAngle = 90
+        }
+
         session.commitConfiguration()
         videoQueue.async { [weak self] in
             self?.session.startRunning()
         }
+    }
+
+    /// Prefers the ultra-wide ("0.5x") lens over the standard wide
+    /// ("1x") lens. This is a framing fix, not a quality tweak: at 1x
+    /// from a normal phone-propped-above-the-board distance, the
+    /// board can easily fill more than the frame's width/height —
+    /// which was cutting off the h-file and the bottom-right corner
+    /// entirely in testing, silently undercounting occupied squares
+    /// (they were never in the shot at all, not misclassified). The
+    /// ultra-wide lens's wider field of view lets the whole board fit
+    /// from the same physical distance instead of requiring the user
+    /// to prop the phone further away (often impractical indoors).
+    /// Falls back to the standard wide lens on hardware without an
+    /// ultra-wide (e.g. iPhone SE) rather than failing to start at all.
+    private static func pickCaptureDevice() -> AVCaptureDevice? {
+        AVCaptureDevice.default(.builtInUltraWideCamera, for: .video, position: .back)
+            ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
     }
 }
 

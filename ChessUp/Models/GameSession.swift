@@ -109,6 +109,11 @@ enum GamePhase {
         if case .waitingForHumanMove = self { return true }
         return false
     }
+
+    var isCalibratingBoard: Bool {
+        if case .calibratingBoard = self { return true }
+        return false
+    }
 }
 
 @MainActor
@@ -174,6 +179,22 @@ final class GameSession: ObservableObject {
         }
     }
 
+    /// Abandons the current game and returns to the setup screen —
+    /// called from GameView's back button. Cancels any in-flight engine
+    /// configuration and resets the board/history so a fresh
+    /// `startGame` afterward doesn't inherit stale state. Doesn't touch
+    /// the camera/vision pipeline itself — GameView's `.onDisappear`
+    /// (triggered once ContentView switches back to SetupView as
+    /// `phase` changes) already calls `VisionCoordinator.stop()`.
+    func returnToSetup() {
+        engineConfigurationTask?.cancel()
+        engineConfigurationTask = nil
+        board = Board()
+        moveHistory = []
+        lastAnnouncedMove = nil
+        phase = .setup
+    }
+
     /// Called by the vision pipeline once it's confident the human
     /// physically completed a legal move on the board (see
     /// `MoveDetector`). `lanMove` is long algebraic notation, e.g.
@@ -197,7 +218,7 @@ final class GameSession: ObservableObject {
         guard board.canMove(pieceAt: move.start, to: move.end) else {
             return
         }
-        board.move(pieceAt: move.start, to: move.end)
+        applyMove(move)
         moveHistory.append(move.san)
 
         if let result = gameOverResult() {
@@ -218,21 +239,10 @@ final class GameSession: ObservableObject {
 
         // Same EngineLANParser.parse(move:for:in:) signature as the
         // human-move branch above.
-        //
-        // NOTE: board.move(pieceAt:to:) (Square-based) is used here
-        // rather than applying `move` directly, which means promotion
-        // piece choice from the LAN (e.g. "e7e8q") isn't actually wired
-        // through yet — ChessKit's move(pieceAt:to:) puts the board into
-        // a `.promotion(move:)` state for any pawn reaching the back
-        // rank, requiring a follow-up `board.completePromotion(of:to:)`
-        // call to finish it. Until that's added, promotions will get
-        // stuck in `.promotion` state rather than completing. Flagging
-        // as a real TODO, not blocking the mock-loop test since that
-        // only exercises pawn pushes so far.
         guard let move = EngineLANParser.parse(move: engineMove.uci, for: board.position.sideToMove, in: board.position) else {
             return
         }
-        board.move(pieceAt: move.start, to: move.end)
+        applyMove(move)
 
         moveHistory.append(move.san)
         lastAnnouncedMove = move.san
@@ -243,6 +253,23 @@ final class GameSession: ObservableObject {
             phase = .gameOver(result: result)
         } else {
             phase = .waitingForHumanMove
+        }
+    }
+
+    /// Applies a validated move to the board, completing any pawn
+    /// promotion by auto-queening. Promotion piece choice isn't
+    /// detectable by the simplified color-only vision pipeline (a
+    /// promoted pawn looks the same regardless of what it became), and
+    /// MoveDetector's own LAN output already assumes queen for the same
+    /// reason, so this keeps both move-application paths consistent
+    /// with that choice. `board.move(pieceAt:to:)` alone leaves the
+    /// board sitting in a `.promotion(move:)` state for any pawn
+    /// reaching the back rank rather than completing the move, which is
+    /// what `completePromotion` finishes here.
+    private func applyMove(_ move: Move) {
+        board.move(pieceAt: move.start, to: move.end)
+        if case .promotion(let pendingMove) = board.state {
+            board.completePromotion(of: pendingMove, to: .queen)
         }
     }
 
@@ -271,5 +298,24 @@ final class GameSession: ObservableObject {
             case .agreement: return "Draw by agreement"
             }
         }
+    }
+}
+
+// MARK: - MoveLegalityOracle
+
+/// Lets MoveDetector (owned by VisionCoordinator, not GameSession)
+/// query the current chess position's legality without VisionCoordinator
+/// needing direct access to `board`, which stays private.
+extension GameSession: MoveLegalityOracle {
+    var sideToMove: Piece.Color {
+        board.position.sideToMove
+    }
+
+    func legalDestinations(from square: Square) -> [Square] {
+        board.legalMoves(forPieceAt: square)
+    }
+
+    func isPawn(at square: Square) -> Bool {
+        board.position.piece(at: square)?.kind == .pawn
     }
 }

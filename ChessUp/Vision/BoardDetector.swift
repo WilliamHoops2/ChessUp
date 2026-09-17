@@ -2,7 +2,7 @@
 //  BoardDetector.swift
 //  ChessUp
 //
-//  Created by William Silvano Angga on 12/09/26.
+//  Created by William Silvano Angga on 15/09/26.
 //
 //  `MockBoardDetector` lets you build and test GameSession, the engine
 //  integration, speech, and the whole UI flow without a camera or a
@@ -37,10 +37,54 @@ final class MockBoardDetector: BoardDetector {
         currentState
     }
 
-    /// Debug-only hook: simulate a human physically moving a piece.
+    func reset() {
+        currentState = .startingPosition
+    }
+
+    /// Debug-only hook: simulate a human physically moving a piece —
+    /// covers both plain moves and direct captures (a capture is just
+    /// a move onto an already-occupied destination; whatever was there
+    /// is simply overwritten, exactly as it would be on a real board).
+    /// Does NOT by itself simulate castling or en passant, since those
+    /// change more than 2 squares atomically — see the dedicated
+    /// helpers below for those.
     func simulateMove(from: (file: Int, rank: Int), to: (file: Int, rank: Int)) {
-        guard let piece = currentState[from.file, from.rank] else { return }
-        currentState[from.file, from.rank] = nil
-        currentState[to.file, to.rank] = piece
+        let occupant = currentState[from.file, from.rank]
+        guard occupant != .empty else { return }
+        currentState[from.file, from.rank] = .empty
+        currentState[to.file, to.rank] = occupant
+    }
+
+    /// Debug-only hook: simulate castling, moving the king and rook
+    /// together in one atomic change. MoveDetector specifically looks
+    /// for a 4-square diff to recognize castling — two separate
+    /// `simulateMove` calls (with stable frames fed in between) would
+    /// instead look like two independent normal moves.
+    func simulateCastle(
+        kingFrom: (file: Int, rank: Int), kingTo: (file: Int, rank: Int),
+        rookFrom: (file: Int, rank: Int), rookTo: (file: Int, rank: Int)
+    ) {
+        let king = currentState[kingFrom.file, kingFrom.rank]
+        let rook = currentState[rookFrom.file, rookFrom.rank]
+        guard king != .empty, rook != .empty else { return }
+        currentState[kingFrom.file, kingFrom.rank] = .empty
+        currentState[rookFrom.file, rookFrom.rank] = .empty
+        currentState[kingTo.file, kingTo.rank] = king
+        currentState[rookTo.file, rookTo.rank] = rook
+    }
+
+    /// Debug-only hook: simulate an en passant capture — the moving
+    /// pawn's origin and destination, plus the captured pawn's square
+    /// (adjacent to origin, same file as destination), all changing
+    /// atomically. Mirrors MoveDetector's 3-square en passant pattern.
+    func simulateEnPassant(
+        from: (file: Int, rank: Int), to: (file: Int, rank: Int),
+        capturedPawnAt captured: (file: Int, rank: Int)
+    ) {
+        let pawn = currentState[from.file, from.rank]
+        guard pawn != .empty, currentState[captured.file, captured.rank] != .empty else { return }
+        currentState[from.file, from.rank] = .empty
+        currentState[captured.file, captured.rank] = .empty
+        currentState[to.file, to.rank] = pawn
     }
 }
