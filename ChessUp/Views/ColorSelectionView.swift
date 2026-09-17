@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ColorSelectionView: View {
     @Binding var selectedSide: PlayerSide
+    let onBack: () -> Void
     let onContinue: () -> Void
 
     var body: some View {
@@ -16,11 +17,10 @@ struct ColorSelectionView: View {
             Color.black.ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 0) {
-                brandMark
+                backButton
+                    .padding(.bottom, 20)
 
-                Spacer(minLength: 28)
-
-                Text("PICK YOUR\nSIDE")
+                Text("WHICH SIDE DO YOU WANT TO PLAY AS ?")
                     .font(.system(size: 52, weight: .black, design: .default).width(.condensed))
                     .foregroundStyle(.white)
                     .lineSpacing(-6)
@@ -48,16 +48,27 @@ struct ColorSelectionView: View {
             }
         }
     }
-
-    private var brandMark: some View {
-        HStack(spacing: 6) {
-            Text("♛")
-                .font(.system(size: 52))
-            Text("CHESSUP")
-                .font(.system(size: 39, weight: .bold, design: .default).width(.condensed))
-                .tracking(2)
+    
+    private var backButton: some View {
+        Button(action: onBack) {
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 13, weight: .bold))
+                
+                Text("BACK")
+                    .font(
+                        .system(
+                            size: 13,
+                            weight: .bold,
+                            design: .default
+                        )
+                        .width(.condensed)
+                    )
+                    .tracking(1.5)
+            }
+            .foregroundStyle(.white.opacity(0.7))
         }
-        .foregroundStyle(.white)
+        .buttonStyle(.plain)
     }
 
     private func sideCard(_ side: PlayerSide) -> some View {
@@ -112,5 +123,9 @@ struct ColorSelectionView: View {
 }
 
 #Preview {
-    ColorSelectionView(selectedSide: .constant(.white)) {}
+    ColorSelectionView(
+        selectedSide: .constant(.white),
+        onBack: {},
+        onContinue: {}
+    )
 }

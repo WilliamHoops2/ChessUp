@@ -90,6 +90,14 @@ enum BotDifficulty: String, CaseIterable, Identifiable {
         case .hard: return "Ready for a real challenge?"
         }
     }
+    
+    var elo: String {
+        switch self {
+        case .easy: return "0-600 elo"
+        case .medium: return "600-1200 elo"
+        case .hard: return ">1200 elo"
+        }
+    }
 }
 
 enum GamePhase {
