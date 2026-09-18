@@ -4,50 +4,18 @@
 //
 //  Created by William Silvano Angga on 15/09/26.
 //
-//  Draws whatever the vision pipeline currently sees on top of the
-//  camera preview: the 4 corner points (color-coded, with their
-//  confidence scores), lines connecting them into the quadrilateral
-//  the perspective warp will use, and a status banner mirroring the
-//  console log. Exists purely for debugging/testing — has zero effect
-//  on detection itself, which reads directly from CoreMLBoardDetector
-//  independently of anything drawn here.
-//
-//  Corner colors: red = top-left, green = top-right, blue =
-//  bottom-right, yellow = bottom-left — matching that order makes it
-//  easy to spot an unexpected rotation (e.g. if what looks like the
-//  board's actual top-left corner gets marked blue instead of red,
-//  that's a real orientation mismatch worth investigating, not just a
-//  low-confidence miss).
-//
 
 import SwiftUI
 
 struct DebugOverlayView: View {
     let corners: BoardCorners?
     let cornerConfidences: [Float]?
-    /// Pixel size of the raw camera frame the corners were computed
-    /// in — needed to map frame-space points onto this view's own
-    /// size, accounting for the preview's aspect-fill cropping.
     let imageSize: CGSize
     let statusMessage: String
     let isCalibrated: Bool
-    /// The warped top-down crop pieces-model actually analyzed this
-    /// frame, and whatever it found there. Shown as a small inset
-    /// thumbnail so "is grid/piece detection working" has a direct
-    /// visual answer instead of having to infer it from corner
-    /// coordinates or console text alone.
     let warpedImage: CGImage?
     let detectedPieces: [PieceDetectionDebug]
     let boardGrid: BoardGrid
-    /// Real device safe-area insets, captured by GameView from a
-    /// GeometryReader that sits ABOVE any `.ignoresSafeArea()` call.
-    /// This view itself is full-bleed (ignoring safe area, so corner
-    /// markers line up with the full-bleed camera preview), which
-    /// means a GeometryReader placed inside it would report ~0 for
-    /// these — SwiftUI zeroes out `safeAreaInsets` for any edge a view
-    /// has already opted out of. Passing the real values in from
-    /// outside that boundary is what actually clears the Dynamic
-    /// Island/notch and home indicator.
     let safeAreaTop: CGFloat
     let safeAreaBottom: CGFloat
 
@@ -90,12 +58,6 @@ struct DebugOverlayView: View {
                     }
                 }
 
-                // Status banner mirroring the console log, so you can
-                // see what's happening without a cable attached. Uses
-                // `safeAreaTop` (passed in from GameView, captured
-                // above the ignoresSafeArea boundary) rather than this
-                // view's own GeometryReader — see the `safeAreaTop`
-                // doc comment for why that's necessary here.
                 Text(statusMessage.isEmpty ? "Waiting for first frame…" : statusMessage)
                     .font(.system(size: 13, weight: .medium, design: .monospaced))
                     .foregroundColor(.white)
@@ -114,16 +76,8 @@ struct DebugOverlayView: View {
         .allowsHitTesting(false)
     }
 
-    /// Small inset showing the exact crop pieces-model saw this frame,
-    /// with an 8x8 grid (the same grid `CoreMLBoardDetector.detectPieces`
-    /// buckets box-centers into) and a box per detection. Bottom-right,
-    /// clear of the home indicator via `safeAreaBottom` (see that
-    /// property's doc comment for why this can't use its own
-    /// GeometryReader's safeAreaInsets instead).
     private func warpedThumbnail(_ image: CGImage, in geo: GeometryProxy) -> some View {
         let side: CGFloat = 140
-        // Vision convention (origin bottom-left, y-up) -> this
-        // thumbnail's own top-left/y-down drawing space.
         let xPositions = boardGrid.fileLines.map { $0 * side }
         let yPositions = boardGrid.rankLines.map { (1 - $0) * side }
         return VStack(spacing: 0) {
@@ -141,10 +95,6 @@ struct DebugOverlayView: View {
                     .frame(width: side, height: side)
                     .clipped()
 
-                // The ACTUAL refined grid lines detectPieces() buckets
-                // box-centers into (GridRefiner.swift) — not a uniform
-                // /8 split, so this should visibly hug the real board
-                // edges even when the perspective warp isn't pixel-perfect.
                 Path { path in
                     for x in xPositions.dropFirst().dropLast() {
                         path.move(to: CGPoint(x: x, y: 0)); path.addLine(to: CGPoint(x: x, y: side))
@@ -155,9 +105,6 @@ struct DebugOverlayView: View {
                 }
                 .stroke(Color.white.opacity(0.5), lineWidth: 0.75)
 
-                // One box per detected piece. Vision boxes are
-                // normalized with origin bottom-left; this thumbnail's
-                // coordinate space is top-left, so flip y.
                 ForEach(Array(detectedPieces.enumerated()), id: \.offset) { _, piece in
                     let rect = CGRect(
                         x: piece.boundingBox.minX * side,
@@ -181,12 +128,6 @@ struct DebugOverlayView: View {
         )
     }
 
-    /// Maps a point in the source frame's own pixel space to this
-    /// view's coordinate space, replicating the same math
-    /// AVCaptureVideoPreviewLayer's `.resizeAspectFill` gravity uses
-    /// (CameraPreviewView sets that same gravity) — so a corner drawn
-    /// here should land exactly on the corner the model actually found
-    /// in the live feed, not some offset/scaled version of it.
     private func mapPoint(_ point: CGPoint, imageSize: CGSize, viewSize: CGSize) -> CGPoint {
         let scale = max(viewSize.width / imageSize.width, viewSize.height / imageSize.height)
         let scaledWidth = imageSize.width * scale

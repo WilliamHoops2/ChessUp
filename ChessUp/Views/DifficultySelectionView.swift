@@ -149,26 +149,12 @@ struct DifficultySelectionView: View {
                         .font(.system(size: 13))
                         .opacity(0.65)
                     
-                    Text(level.elo)
-                        .font(.system(size: 13))
-                        .opacity(0.65)
                 }
                 .foregroundStyle(
                     isSelected ? .white : .black
                 )
                 
                 Spacer()
-                
-                Image(systemName: "arrow.right")
-                    .font(
-                        .system(
-                            size: 13,
-                            weight: .semibold
-                        )
-                    )
-                    .foregroundStyle(
-                        isSelected ? .white : .black
-                    )
             }
             .padding(.horizontal, 18)
             

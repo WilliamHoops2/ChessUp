@@ -103,7 +103,7 @@ struct ColorSelectionView: View {
             }
         } label: {
             VStack(spacing: 14) {
-                Text(isWhiteCard ? "♙" : "♟")
+                Text("♙")
                     .font(.system(size: 60))
                     .foregroundStyle(
                         isWhiteCard ? .black : .white
